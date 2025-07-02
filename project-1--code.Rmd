@@ -1,15 +1,3 @@
----
-title: "Untitled"
-author: "Ismat"
-date: "2024-10-27"
-output:
-  pdf_document: default
-  html_document: default
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
 ```{r}
 library(readr)
