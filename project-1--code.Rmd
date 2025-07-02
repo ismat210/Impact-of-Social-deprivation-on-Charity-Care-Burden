@@ -1,0 +1,393 @@
+---
+title: "Untitled"
+author: "Ismat"
+date: "2024-10-27"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+CCN_burden = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/2020-2022 Disparity Measures by CMS Number (1).csv")
+hospital1_data = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/2022 5-Year ACS SDI Measures by ZCTA.csv")
+mCCN_zipcode = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/Hospital_Service_Area_2022.csv")
+zipcode_zcta = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/ZIP Code to ZCTA Crosswalk (1).csv")
+zcta_sdi = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/rgcsdi-2015-2019-zcta.csv")
+CCN_bed = read_csv("C:/Users/Ismat/OneDrive/Desktop/fall24/Stat consulting/Project 1/Hospital Characteristics 2021.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Step 1: Load the datasets (files are in CSV format)
+#setwd(" C:\\Stat consulting \\Project 1")
+
+#zipcode_zcta <- read.csv("ZIP Code to ZCTA Crosswalk.csv")
+#zipcode_zcta
+#mCCN_zipcode <- read.csv("Hospital_Service_Area_2022.csv")
+#mCCN_zipcode
+#zcta_sdi<- read.csv("rgcsdi-2015-2019-zcta.csv")
+#zcta_sdi
+#CCN_burden <- read.csv("2020-2022 Disparity Measures by CMS #Number.csv")
+#CCN_burden
+#CCN_bed<-read.csv("Hospital Characteristics 2021.csv")
+
+# Step 2: Merge zipcode_zcta data and mCCN_zipcode data based on ZIP codes
+# We assume that ZIP_CODE in zipcode_zcta and ZIP_CD_OF_RESIDENCE in mCCN_zipcode are the columns to merge on
+zip_mCCN_merged1 <- mCCN_zipcode %>%
+  left_join(zipcode_zcta, by = c("ZIP_CD_OF_RESIDENCE" = "ZIP_CODE"))
+
+# Step 3: Merge the zcta_sdi based on ZCTA (from the merged 1 dataset)
+# Assuming zcta in zipcode_zcta corresponds to ZCTA5_FIPS in zcta_sdi
+zip_mCCN_zcta_merged2 <- zip_mCCN_merged1 %>%
+  left_join(zcta_sdi, by = c("zcta" = "ZCTA5_FIPS"))
+
+
+# Step 4: Merge hospital data based on the Medicare provider number (CCN and MEDICARE_PROV_NUM)
+# Assuming MEDICARE_PROV_NUM in mCCN_zipcode corresponds to CCN in CCN_burden
+
+zip_mCCN_zcta_merged2=zip_mCCN_zcta_merged2%>%mutate(MEDICARE_PROV_NUM=as.numeric(MEDICARE_PROV_NUM))
+
+final_with_burden <- zip_mCCN_zcta_merged2 %>%
+  left_join(CCN_burden, by = c("MEDICARE_PROV_NUM" = "CCN"))
+
+# Convert MEDICARE_PROV_NUM in final_with_burden and CCN in CCN_bed to numeric, if necessary
+CCN_bed <- CCN_bed %>%
+  mutate(CCN = as.numeric(CCN))
+# Check the column names in CCN_bed
+colnames(CCN_bed)
+
+# Assuming the correct column names are found to be 'BEDS' and 'TOTAL_BEDS'
+final_data <- final_with_burden %>%
+  left_join(CCN_bed %>% select(CCN, num_beds, bed_size_simple, type_of_service), by = c("MEDICARE_PROV_NUM" = "CCN"))
+final_data=final_data%>%mutate(TOTAL_CASES=as.numeric(TOTAL_CASES), TOTAL_CHARGES=as.numeric(TOTAL_CHARGES),
+                               TOTAL_DAYS_OF_CARE=as.numeric(TOTAL_DAYS_OF_CARE))
+final_data2=final_data%>%dplyr::filter( !is.na(TOTAL_CASES))
+final_data2=final_data2%>%dplyr::filter( !is.na(MEDICARE_PROV_NUM))
+#write.csv(final_data2,file = "final_data2.csv",row.names = FALSE)
+```
+
+
+
+```{r}
+##2.)Check unique medicare IDs & unique ZCTAs
+ 
+# Step 2.1: Count unique MEDICARE_PROV_NUMs for each ZIP_CD_OF_RESIDENCE
+mCCN_by_zip <- final_data2 %>%
+  group_by(ZIP_CD_OF_RESIDENCE) %>%
+  summarise(Unique_mCCN_by_zip = n_distinct(MEDICARE_PROV_NUM)) %>%
+  ungroup()
+print(mCCN_by_zip)
+# Step 2.2: Get the total count of distinct MEDICARE_PROV_NUMs across all ZIP_CD_OF_RESIDENCE
+total_mCCN_count <- n_distinct(final_data2$MEDICARE_PROV_NUM)
+# Print the total distinct MEDICARE_PROV_NUMs
+print(total_mCCN_count)
+```
+
+```{r}
+# Install and load necessary packages
+if(!require(qgam)) install.packages("qgam", dependencies=TRUE)
+library(qgam)
+library(dplyr)
+
+#After adding new variables, create new weighted data
+
+new_weighted_avg_by_hospital <- final_data2 %>%
+  group_by(MEDICARE_PROV_NUM) %>%
+  mutate(total_cases = sum(TOTAL_CASES)) %>%
+  mutate(weight = TOTAL_CASES / total_cases) %>%
+  mutate(weighted_SDI_score = weight * SDI_score,
+         weighted_PovertyLT100_FPL_score = weight * PovertyLT100_FPL_score,
+         weighted_Single_Parent_Fam_score = weight * Single_Parent_Fam_score,
+         weighted_Education_LT12years_score = weight * Education_LT12years_score,
+         weighted_HHNo_Vehicle_score = weight * HHNo_Vehicle_score,
+         weighted_HHRenter_Occupied_score = weight * HHRenter_Occupied_score,
+         weighted_HHCrowding_score = weight * HHCrowding_score,
+         weighted_Nonemployed_score = weight * Nonemployed_score) %>%
+   summarise(
+    #across(everything(), first),
+    weighted_SDI_score = sum(weighted_SDI_score),
+    weighted_PovertyLT100_FPL_score = sum(weighted_PovertyLT100_FPL_score),
+    weighted_Single_Parent_Fam_score = sum(weighted_Single_Parent_Fam_score),
+    weighted_Education_LT12years_score = sum(weighted_Education_LT12years_score),
+    weighted_HHNo_Vehicle_score = sum(weighted_HHNo_Vehicle_score),
+    weighted_HHRenter_Occupied_score = sum(weighted_HHRenter_Occupied_score),
+    weighted_HHCrowding_score = sum(weighted_HHCrowding_score),
+    weighted_Nonemployed_score = sum(weighted_Nonemployed_score),
+    critical_access = first(critical_access),
+    teaching_status = first(teaching_status),
+    urban_rural = first(urban_rural),
+    referral_center = first(referral_center),
+    ownership_type_simple = first(ownership_type_simple),
+    medicaid_caseload = first(medicaid_caseload),
+    disproportionate_percentage = first(disproportionate_percentage),
+    charity_care_burden = first(charity_care_burden),
+    uncomp_burden = first(uncomp_burden),
+    total_cases = first(total_cases),
+    num_beds = first(num_beds),
+    bed_size_simple = first(bed_size_simple),
+    type_of_service = first(type_of_service)
+  ) %>%
+  ungroup() 
+#write.csv(new_weighted_avg_by_hospital,file = "new_weighted_data.csv",row.names = FALSE)
+```
+Remove negative values, clean data.
+
+```{r}
+# Step 1: Remove negative and infinite values from charity_care_burden
+new_cleaned_data <- new_weighted_avg_by_hospital %>%
+  dplyr::filter(charity_care_burden >= 0 & is.finite(charity_care_burden))
+#write.csv(new_cleaned_data,file = "new_cleaned_data.csv",row.names = FALSE)
+
+#DESCRIPTIVE ANALYSIS
+# Install and load ggplot2 if not already installed
+if (!require(ggplot2)) install.packages("ggplot2", dependencies=TRUE)
+library(ggplot2)
+
+# Define a list of variables to plot against charity_care_burden
+predictor_vars <- c("weighted_SDI_score", 
+                    "weighted_PovertyLT100_FPL_score", 
+                    "weighted_Single_Parent_Fam_score", 
+                    "weighted_Education_LT12years_score", 
+                    "weighted_HHNo_Vehicle_score", 
+                    "weighted_HHRenter_Occupied_score", 
+                    "weighted_HHCrowding_score", 
+                    "weighted_Nonemployed_score")
+
+# Loop through each predictor variable and plot
+for (var in predictor_vars) {
+  plot <- ggplot(new_weighted_avg_by_hospital, aes(x = .data[[var]], y = charity_care_burden)) +
+    geom_point(color = "blue", alpha = 0.6) +
+    labs(title = paste("Scatter plot of charity_care_burden vs", var),
+         x = var,
+         y = "charity_care_burden") +
+    theme_bw() +  # Set white background
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+  
+  # Save each plot as a PNG file
+  ggsave(filename = paste0("scatter_plot_", var, ".png"), plot = plot)
+}
+
+
+
+
+
+```
+Fit a quantile regression model using qgam
+```{r}
+
+# model for the median (0.5 quantile), can adjust this to other quantiles if needed.
+library(qgam)
+qgam_model <- qgam(charity_care_burden ~ s(weighted_SDI_score) +
+                     critical_access +
+                     teaching_status +
+                     urban_rural +
+                     referral_center +
+                     ownership_type_simple +
+                     type_of_service +
+                     total_cases, 
+                   data = new_cleaned_data, qu = 0.5)
+
+# View the summary of the model
+summary(qgam_model)
+# Plot the results if needed
+plot(qgam_model)
+ 
+# Fit quantile models for multiple quantiles (e.g., 0.25, 0.5, 0.90)
+q=0.9
+quantiles <- q
+models <- lapply(quantiles, function(q) {
+  qgam(charity_care_burden ~ s(weighted_SDI_score, k=3), 
+       data = new_cleaned_data, qu = q)
+})
+
+# Print coefficients in a single row
+cat("Coefficients:\n", paste(coef(qgam_model), collapse = " "), "\n")
+```
+
+
+```{r}
+#DIFFERENT QGAM MODEL 1 with SDI
+# Fit the QGAM model
+qgam_model <- qgam(
+  charity_care_burden ~ 
+    s(weighted_SDI_score) +
+    s(weighted_PovertyLT100_FPL_score) +
+    s(weighted_Single_Parent_Fam_score) +
+    s(weighted_Education_LT12years_score) +
+    s(weighted_HHNo_Vehicle_score) +
+    s(weighted_HHRenter_Occupied_score) +
+    s(weighted_HHCrowding_score) +
+    s(weighted_Nonemployed_score),
+  data = new_cleaned_data,
+  qu = 0.5
+)
+
+# View the summary of the model
+summary(qgam_model)
+
+# Plot each term on a separate page
+par(mfrow = c(1, 1))  # Reset plot layout to single plot per page
+terms <- c("weighted_SDI_score", "weighted_PovertyLT100_FPL_score", "weighted_Single_Parent_Fam_score",
+           "weighted_Education_LT12years_score", "weighted_HHNo_Vehicle_score", 
+           "weighted_HHRenter_Occupied_score", "weighted_HHCrowding_score", "weighted_Nonemployed_score")
+
+# Plot each term individually
+for (i in seq_along(terms)) {
+  plot(qgam_model, select = i, main = paste("Effect of", terms[i]))
+}
+
+
+```
+
+```{r}
+#DIFFERENT QGAM MODEL 2 with out SDI
+# Fit the QGAM model
+qgam_model <- qgam(
+  charity_care_burden ~ 
+    s(weighted_PovertyLT100_FPL_score) +
+    s(weighted_Single_Parent_Fam_score) +
+    s(weighted_Education_LT12years_score) +
+    s(weighted_HHNo_Vehicle_score) +
+    s(weighted_HHRenter_Occupied_score) +
+    s(weighted_HHCrowding_score) +
+    s(weighted_Nonemployed_score),
+  data = new_cleaned_data,
+  qu = 0.5
+)
+
+# View the summary of the model
+summary(qgam_model)
+
+# Plot each term on a separate page
+par(mfrow = c(1, 1))  # Reset plot layout to single plot per page
+terms <- c("weighted_PovertyLT100_FPL_score", "weighted_Single_Parent_Fam_score",
+           "weighted_Education_LT12years_score", "weighted_HHNo_Vehicle_score", 
+           "weighted_HHRenter_Occupied_score", "weighted_HHCrowding_score", "weighted_Nonemployed_score")
+
+# Plot each term individually
+for (i in seq_along(terms)) {
+  plot(qgam_model, select = i, main = paste("Effect of", terms[i]))
+}
+
+
+```
+
+
+
+```{r}
+# Install and load necessary packages if not already installed
+if(!require(qgam)) install.packages("qgam", dependencies=TRUE)
+if(!require(ggplot2)) install.packages("ggplot2", dependencies=TRUE)
+if(!require(quantreg)) install.packages("quantreg", dependencies=TRUE)  # For linear quantile regression
+library(qgam)
+library(ggplot2)
+library(dplyr)
+library(quantreg)
+
+# Predict values and confidence intervals for each model
+prediction_data <- new_cleaned_data %>%
+  dplyr::select(weighted_SDI_score) %>%
+  distinct() %>%
+  arrange(weighted_SDI_score)
+predictions <- do.call(rbind, lapply(1:length(quantiles), function(i) {
+  model <- models[[i]]
+  pred <- predict(model, newdata = prediction_data, se.fit = TRUE)
+  data.frame(
+    weighted_SDI_score = prediction_data$weighted_SDI_score,
+    fit = pred$fit,
+    lower = pred$fit - 1.96 * pred$se.fit,  # 95% CI lower bound
+    upper = pred$fit + 1.96 * pred$se.fit,  # 95% CI upper bound
+    quantile = quantiles[i]
+  )
+}))
+# Fit a linear quantile regression model for q=0.75
+linear_qr_model <- rq(charity_care_burden ~ weighted_SDI_score, tau = q, data = new_cleaned_data)
+# Step 5: Generate predictions from the linear quantile regression model
+linear_qr_predictions <- data.frame(
+  weighted_SDI_score = prediction_data$weighted_SDI_score,
+  fit = predict(linear_qr_model, newdata = prediction_data)
+)
+# Plot with ggplot2, adding actual data points and both qgam and linear quantile regression lines
+ggplot() +
+  # Plot the actual data points
+  geom_point(data = new_cleaned_data, 
+             aes(x = weighted_SDI_score, y = charity_care_burden), 
+             color = "black", alpha = 0.5) +
+  
+  # Plot the quantile regression lines from qgam
+  geom_line(data = predictions, aes(x = weighted_SDI_score, y = fit, color = factor(quantile))) +
+  
+  # Plot the confidence interval ribbons from qgam
+  geom_ribbon(data = predictions, 
+              aes(x = weighted_SDI_score, ymin = lower, ymax = upper, fill = factor(quantile)), 
+              alpha = 0.2) +
+  
+  # Add the linear quantile regression line for q=0.75
+  geom_line(data = linear_qr_predictions, aes(x = weighted_SDI_score, y = fit), 
+            color = "red", linetype = "dashed", size = 1, 
+            inherit.aes = FALSE) +
+  
+  # Add labels and title
+  labs(
+    title = "Quantile Regression (QGAM and Linear) of Charity Care Burden on Weighted SDI Score",
+    x = "Weighted SDI Score",
+    y = "Charity Care Burden",
+    color = "QGAM Quantile",
+    fill = "QGAM Quantile"
+  ) + ylim(c(0,.2)) +
+  
+  # Adjust the theme
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+```
+
+```{r}
+# Install arsenal package if not already installed
+if(!require(arsenal)) install.packages("arsenal", dependencies = TRUE)
+
+# Load the arsenal package
+library(arsenal)
+
+summary_table <- tableby( ~ critical_access + 
+                            teaching_status + 
+                            urban_rural + 
+                            referral_center + 
+                            ownership_type_simple + 
+                            bed_size_simple +
+                            type_of_service +
+                            medicaid_caseload + 
+                            disproportionate_percentage + 
+                            charity_care_burden + 
+                            uncomp_burden + 
+                            weighted_SDI_score + 
+                            weighted_PovertyLT100_FPL_score + 
+                            weighted_Single_Parent_Fam_score + 
+                            weighted_Education_LT12years_score + 
+                            weighted_HHNo_Vehicle_score + 
+                            weighted_HHRenter_Occupied_score + 
+                            weighted_HHCrowding_score + 
+                            weighted_Nonemployed_score,
+                          data = new_cleaned_data)
+summary(summary_table)
+```
+
